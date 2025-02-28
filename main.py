@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
-from routes import auth, materials
+from routes import auth, signup, materials
 
 app = FastAPI()
 
@@ -16,6 +16,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/auth")
+app.include_router(signup.router, prefix="/signup")
 app.include_router(materials.router, prefix="/api")
 # 挂载静态文件目录
 # app.mount("/cif_files", StaticFiles(directory="cif_data"), name="cif_files")
