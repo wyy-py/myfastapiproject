@@ -1,10 +1,14 @@
+import gzip
 import json
 import os
+import shutil
+import tempfile
 
+import requests
 from fastapi import APIRouter, HTTPException, FastAPI, Query
 from pymatgen.core import Structure
 from pymatgen.io.cif import CifWriter
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, HTMLResponse
 
 from database import collection
 from pydantic import BaseModel, Field
@@ -433,3 +437,67 @@ async def download_structure_by_id(material_id: str):
         raise HTTPException(status_code=500, detail=f"Error processing structure: {str(e)}")
 
 
+@router.get("/get_bdos_url/{material_id}")
+# async def get_bdos_url(material_id: str):
+#     """ 根据 material_id 获取 BDOS HTML 预览 URL """
+#     try:
+#         material_id = ObjectId(material_id)  # 转换为 ObjectId
+#     except Exception:
+#         raise HTTPException(status_code=400, detail="Invalid ObjectId format")
+#
+#     doc = collection.find_one({"_id": material_id})
+#     if not doc or "bdos_url" not in doc:
+#         raise HTTPException(status_code=404, detail="BDOS URL not found")
+#
+#     return {"bdos_url": doc["bdos_url"]}
+async def get_bdos_html(material_id: str):
+    """ 根据 material_id 下载、解压并返回 BDOS HTML 内容 """
+    try:
+        obj_id = ObjectId(material_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ObjectId format")
+
+    doc = collection.find_one({"_id": obj_id})
+    if not doc or "bdos_url" not in doc:
+        raise HTTPException(status_code=404, detail="BDOS URL not found")
+
+    bdos_url = doc["bdos_url"]
+
+    # 下载 .html.gz 文件并保存到临时文件中
+    try:
+        response = requests.get(bdos_url, stream=True)
+        response.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading file: {e}")
+
+    # 使用 tempfile 创建临时文件
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html.gz") as tmp_gz:
+        gz_path = tmp_gz.name
+        shutil.copyfileobj(response.raw, tmp_gz)
+
+    # 解压临时 .gz 文件，写入另一个临时文件
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="wb") as tmp_html:
+        html_path = tmp_html.name
+    try:
+        with gzip.open(gz_path, "rb") as gz_file, open(html_path, "wb") as html_file:
+            shutil.copyfileobj(gz_file, html_file)
+    except Exception as e:
+        # 清理临时文件
+        os.remove(gz_path)
+        os.remove(html_path)
+        raise HTTPException(status_code=500, detail=f"Error decompressing file: {e}")
+
+    # 读取解压后的 HTML 内容
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading HTML file: {e}")
+    finally:
+        # 清理临时文件
+        if os.path.exists(gz_path):
+            os.remove(gz_path)
+        if os.path.exists(html_path):
+            os.remove(html_path)
+
+    return HTMLResponse(content=html_content)
